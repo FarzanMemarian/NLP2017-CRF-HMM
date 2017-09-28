@@ -17,6 +17,7 @@ class BadNerModel():
                 pred_tags.append(self.words_to_tag_counters[tok.word].argmax())
             else:
                 pred_tags.append("O")
+        # import pdb; pdb.set_trace()
         return LabeledSentence(sentence.tokens, chunks_from_bio_tag_seq(pred_tags))
 
 

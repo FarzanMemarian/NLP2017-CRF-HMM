@@ -150,6 +150,7 @@ def read_data(file):
 
 # Evaluates the guess sentences with respect to the gold sentences
 def print_evaluation(gold_sentences, guess_sentences):
+    # import pdb; pdb.set_trace()
     correct = 0
     num_pred = 0
     num_gold = 0

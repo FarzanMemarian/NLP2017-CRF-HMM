@@ -40,18 +40,62 @@ class HmmNerModel(object):
     # Takes a LabeledSentence object and returns a new copy of that sentence with a set of chunks predicted by
     # the HMM model. See BadNerModel for an example implementation
     def decode(self, sentence):
-        
-        import pdb; pdb.set_trace()
+        scr = ProbabilisticSequenceScorer(self.tag_indexer, self.word_indexer, self.init_log_probs, 
+            self.transition_log_probs, self.emission_log_probs)
         pred_tags = []
-        for tok in sentence.tokens:
-            if self.words_to_tag_counters.has_key(tok.word):
-                
-                list_of_Tags = self.words_to_tag_counters[tok.word]
-                pred_tags.append(self.words_to_tag_counters[tok.word].argmax())
+        n_tags = len(self.tag_indexer)
+        n_words = len(sentence.tokens)
+        viterbi = np.zeros((n_tags, n_words))
+        max_index = np.zeros(n_words)
+
+
+        for w_s_index, tok in enumerate(sentence.tokens):
+            # import pdb; pdb.set_trace()
+
+            # if not self.word_indexer.contains(tok.word):
+            #     w_c_index = self.word_indexer.index_of("UNK")
+            # else:
+            #     w_c_index = self.word_indexer.index_of(tok.word)
+            
+            if w_s_index == 0:
+                viterbi[:,w_s_index] = scr.score_init(sentence,range(n_tags)) + \
+                                         scr.score_emission(sentence,range(n_tags),w_s_index)
+                max_index[w_s_index] = np.argmax(viterbi[:,0])
             else:
-                pred_tags.append("O")
+                for t_index in range(n_tags):
+                    temp = viterbi[:,w_s_index-1] + scr.score_transition(sentence, range(n_tags), t_index) +\
+                                                      scr.score_emission(sentence,t_index,w_s_index)
+                    viterbi[t_index,w_s_index] = np.max(temp)
+                max_index[w_s_index] = np.argmax(viterbi[:,w_s_index])
+            pred_tags.append(self.tag_indexer.get_object(max_index[w_s_index]))
+
+
+
+
+        # # without using ProbabilisticSequenceScorer
+        # for w_s_index, tok in enumerate(sentence.tokens):
+        #     # import pdb; pdb.set_trace()
+
+        #     if not self.word_indexer.contains(tok.word):
+        #         w_c_index = self.word_indexer.index_of("UNK")
+        #     else:
+        #         w_c_index = self.word_indexer.index_of(tok.word)
+            
+        #     if w_s_index == 0:
+        #         viterbi[:,w_s_index] = self.init_log_probs +  self.emission_log_probs[:,w_c_index]
+        #         max_index[w_s_index] = np.argmax(viterbi[:,0])
+        #     else:
+        #         for t_index in range(n_tags):
+        #             temp = viterbi[:,w_s_index-1] + self.transition_log_probs[:, t_index] +\
+        #                                           self.emission_log_probs[t_index,w_c_index]
+        #             viterbi[t_index,w_s_index] = np.max(temp)
+        #         max_index[w_s_index] = np.argmax(viterbi[:,w_s_index])
+        #     pred_tags.append(self.tag_indexer.get_object(max_index[w_s_index]))
+
+
+        # import pdb; pdb.set_trace()        
         return LabeledSentence(sentence.tokens, chunks_from_bio_tag_seq(pred_tags))
-        raise Exception("IMPLEMENT ME")
+
 
 
 # Uses maximum-likelihood estimation to read an HMM off of a corpus of sentences.
@@ -97,16 +141,16 @@ def train_hmm_model(sentences):
     transition_counts = np.log(transition_counts / transition_counts.sum(axis=1)[:, np.newaxis])
     # similar to transitions
     emission_counts = np.log(emission_counts / emission_counts.sum(axis=1)[:, np.newaxis])
-    # print "Tag indexer: " + repr(tag_indexer)
-    # print "Initial state log probabilities: " + repr(init_counts)
-    # print "Transition log probabilities: " + repr(transition_counts)
-    # print "Emission log probs too big to print..."
-    # print "Emission log probs for India: " + repr(emission_counts[:,word_indexer.get_index("India")])
-    # print "Emission log probs for Phil: " + repr(emission_counts[:,word_indexer.get_index("Phil")])
-    # print "   note that these distributions don't normaliz2.0e because it's p(word|tag) that normalizes, not p(tag|word)"
+    print "Tag indexer: " + repr(tag_indexer)
+    print "Initial state log probabilities: " + repr(init_counts)
+    print "Transition log probabilities: " + repr(transition_counts)
+    print "Emission log probs too big to print..."
+    print "Emission log probs for India: " + repr(emission_counts[:,word_indexer.get_index("India")])
+    print "Emission log probs for Phil: " + repr(emission_counts[:,word_indexer.get_index("Phil")])
+    print "   note that these distributions don't normalize because it's p(word|tag) that normalizes, not p(tag|word)"
     return HmmNerModel(tag_indexer, word_indexer, init_counts, transition_counts, emission_counts)
 
-2.0
+# 2.0
 # Retrieves a word's index based on its count. If the word occurs only once, treat it as an "UNK" token
 # At test time, unknown words will be replaced by UNKs.
 def get_word_index(word_indexer, word_counter, word):
