@@ -42,37 +42,45 @@ class HmmNerModel(object):
     def decode(self, sentence):
         scr = ProbabilisticSequenceScorer(self.tag_indexer, self.word_indexer, self.init_log_probs, 
             self.transition_log_probs, self.emission_log_probs)
-        pred_tags = []
         n_tags = len(self.tag_indexer)
         n_words = len(sentence.tokens)
+        pred_tags = []
         viterbi = np.zeros((n_tags, n_words))
-        max_index = np.zeros(n_words)
+        backpointer = np.zeros((n_tags, n_words))
+        
+        # first column of viterbi
+        viterbi[:,0] = scr.score_init(sentence,range(n_tags)) + \
+                                 scr.score_emission(sentence,range(n_tags),0)
+        backpointer[:,0] = 0
 
 
-        for w_s_index, tok in enumerate(sentence.tokens):
-            # import pdb; pdb.set_trace()
+        for w_s_index in range(1,n_words):
+            # w_s_index is the index of the word in the sentence
+            for t_index in range(n_tags):
+                temp = viterbi[:,w_s_index-1] + scr.score_transition(sentence, range(n_tags), t_index) +\
+                                                  scr.score_emission(sentence,t_index,w_s_index)
+                viterbi[t_index,w_s_index] = np.max(temp)
+   
+                backpointer[t_index,w_s_index] = np.argmax(viterbi[:,w_s_index-1] + \
+                                               scr.score_transition(sentence, range(n_tags), t_index))
 
-            # if not self.word_indexer.contains(tok.word):
-            #     w_c_index = self.word_indexer.index_of("UNK")
-            # else:
-            #     w_c_index = self.word_indexer.index_of(tok.word)
-            
-            if w_s_index == 0:
-                viterbi[:,w_s_index] = scr.score_init(sentence,range(n_tags)) + \
-                                         scr.score_emission(sentence,range(n_tags),w_s_index)
-                max_index[w_s_index] = np.argmax(viterbi[:,0])
-            else:
-                for t_index in range(n_tags):
-                    temp = viterbi[:,w_s_index-1] + scr.score_transition(sentence, range(n_tags), t_index) +\
-                                                      scr.score_emission(sentence,t_index,w_s_index)
-                    viterbi[t_index,w_s_index] = np.max(temp)
-                max_index[w_s_index] = np.argmax(viterbi[:,w_s_index])
-            pred_tags.append(self.tag_indexer.get_object(max_index[w_s_index]))
+        # for t_index in range(n_tags):  
+        #     temp = viterbi[:,n_words-1] + scr.score_transition(sentence, range(n_tags), t_index)
+        #     viterbi[t_index,n_words-1] = np.max(temp)
+        #     backpointer[t_index,n_words-1] = np.argmax(viterbi[:,n_words-1] + \
+        #                                 scr.score_transition(sentence, range(n_tags), t_index))
+        
+        current_tag = np.argmax(viterbi[:,n_words-1])
+        back_tag = backpointer[current_tag,n_words-1]
+        pred_tags.insert(0, self.tag_indexer.get_object(current_tag))
+        
+        for w_s_index in reversed(range(n_words-1)):
+            current_tag = back_tag
+            pred_tags.insert(0, self.tag_indexer.get_object(current_tag))
+            back_tag = backpointer[current_tag,w_s_index]
 
 
-
-
-        # # without using ProbabilisticSequenceScorer
+        # without using ProbabilisticSequenceScorer
         # for w_s_index, tok in enumerate(sentence.tokens):
         #     # import pdb; pdb.set_trace()
 
@@ -83,14 +91,14 @@ class HmmNerModel(object):
             
         #     if w_s_index == 0:
         #         viterbi[:,w_s_index] = self.init_log_probs +  self.emission_log_probs[:,w_c_index]
-        #         max_index[w_s_index] = np.argmax(viterbi[:,0])
+        #         backpointer[w_s_index] = np.argmax(viterbi[:,0])
         #     else:
         #         for t_index in range(n_tags):
         #             temp = viterbi[:,w_s_index-1] + self.transition_log_probs[:, t_index] +\
         #                                           self.emission_log_probs[t_index,w_c_index]
         #             viterbi[t_index,w_s_index] = np.max(temp)
-        #         max_index[w_s_index] = np.argmax(viterbi[:,w_s_index])
-        #     pred_tags.append(self.tag_indexer.get_object(max_index[w_s_index]))
+        #         backpointer[w_s_index] = np.argmax(viterbi[:,w_s_index])
+        #     pred_tags.append(self.tag_indexer.get_object(backpointer[w_s_index]))
 
 
         # import pdb; pdb.set_trace()        
@@ -141,13 +149,13 @@ def train_hmm_model(sentences):
     transition_counts = np.log(transition_counts / transition_counts.sum(axis=1)[:, np.newaxis])
     # similar to transitions
     emission_counts = np.log(emission_counts / emission_counts.sum(axis=1)[:, np.newaxis])
-    print "Tag indexer: " + repr(tag_indexer)
-    print "Initial state log probabilities: " + repr(init_counts)
-    print "Transition log probabilities: " + repr(transition_counts)
-    print "Emission log probs too big to print..."
-    print "Emission log probs for India: " + repr(emission_counts[:,word_indexer.get_index("India")])
-    print "Emission log probs for Phil: " + repr(emission_counts[:,word_indexer.get_index("Phil")])
-    print "   note that these distributions don't normalize because it's p(word|tag) that normalizes, not p(tag|word)"
+    # print "Tag indexer: " + repr(tag_indexer)
+    # print "Initial state log probabilities: " + repr(init_counts)
+    # print "Transition log probabilities: " + repr(transition_counts)
+    # print "Emission log probs too big to print..."
+    # print "Emission log probs for India: " + repr(emission_counts[:,word_indexer.get_index("India")])
+    # print "Emission log probs for Phil: " + repr(emission_counts[:,word_indexer.get_index("Phil")])
+    # print "   note that these distributions don't normalize because it's p(word|tag) that normalizes, not p(tag|word)"
     return HmmNerModel(tag_indexer, word_indexer, init_counts, transition_counts, emission_counts)
 
 # 2.0
@@ -175,20 +183,70 @@ class CrfNerModel(object):
 # Trains a CrfNerModel on the given corpus of sentences.
 def train_crf_model(sentences):
     tag_indexer = Indexer()
+    n_s = len(sentences)
     for sentence in sentences:
         for tag in sentence.get_bio_tags():
             tag_indexer.get_index(tag)
     print "Extracting features"
     feature_indexer = Indexer()
     # 4-d list indexed by sentence index, word index, tag index, feature index
-    feature_cache = [[[[] for k in xrange(0, len(tag_indexer))] for j in xrange(0, len(sentences[i]))] for i in xrange(0, len(sentences))]
+    feature_cache = [[[[] for k in xrange(0, len(tag_indexer))] for j in xrange(0, len(sentences[i]))] \
+                                                                for i in xrange(0, len(sentences))]
     for sentence_idx in xrange(0, len(sentences)):
         if sentence_idx % 100 == 0:
             print "Ex " + repr(sentence_idx) + "/" + repr(len(sentences))
         for word_idx in xrange(0, len(sentences[sentence_idx])):
             for tag_idx in xrange(0, len(tag_indexer)):
                 feature_cache[sentence_idx][word_idx][tag_idx] = extract_emission_features(sentences[sentence_idx], word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)
-    raise Exception("IMPLEMENT THE REST OF ME")
+    
+ 
+    # compute probability equivalents in terms of feature function
+    epochs = 1
+    for epoch in range(epochs)
+        for iter_n in range(n_s):
+            rand_example = random.randrange(0, n_s)
+            forw_backw = forward_backward
+    
+    
+    forward_backward()
+
+
+    # calculate SGD
+
+    bad_model =  CrfNerModel(tag_indexer,feature_indexer,np.ones(len(feature_indexer))*0.1)
+
+
+def forward_backward(sentence, sentence_id, feature_cache, feature_weights):
+    n_words = len(sentence.tokens)
+    n_tags = len(sentence.get_bio_tags)
+    forward = np.zeros((n_tags, n_words))
+    backward = np.zeros((n_tags, n_words))
+    f_e = prob_substitute(sentence, sentence_id, feature_weights)
+
+    # calculate the forward step
+    forward[:,0] = feature_cache[sentence_id][0][:]  # initialization step\
+
+    #recursion step
+    for in_w in range(1,n_words):
+        for in_tag in range(n_tags):
+            forward[in_tag, in_w] = logaddexp( forward[:,in_w-1] , f_e[:,in_w] )
+
+
+
+
+def prob_substitute(sentence, sentence_id, feature_weights):
+    n_words = len(sentence.tokens)
+    n_tags = len(sentence.get_bio_tags)
+    for in_w in range(n_words):
+        for in_tag in range(n_tags):
+            prob_sub[in_tag, in_w] = score_indexed_features(feature_cache(sentence_id, in_w,in_tag),\
+                                                                          feature_weights)
+    return prob_sub
+
+
+
+
+
 
 
 # Extracts emission features for tagging the word at word_index with tag.
