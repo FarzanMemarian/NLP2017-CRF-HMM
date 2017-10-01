@@ -4,6 +4,7 @@ import sys
 from nerdata import *
 from utils import *
 from models import *
+import pdb
 
 
 class BadNerModel():
@@ -36,9 +37,9 @@ def train_bad_ner_model(training_set):
 if __name__ == '__main__':
     # Load the training and test data
     train_whole = read_data("data/eng.train")
-    train = train_whole
+    train = train_whole[:1000]
     dev_whole = read_data("data/eng.testa")
-    dev = dev_whole
+    dev = dev_whole[:1000]
     # Here's a few sentences...
     print "Examples of sentences:"
     # print str(dev[1])

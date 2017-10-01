@@ -2,8 +2,9 @@
 
 from nerdata import *
 from utils import *
-
+import pdb
 import numpy as np
+from scipy import misc  
 
 
 # Scoring function for sequence models based on conditional probabilities.
@@ -168,6 +169,8 @@ def get_word_index(word_indexer, word_counter, word):
         return word_indexer.get_index(word)
 
 
+
+
 class CrfNerModel(object):
     def __init__(self, tag_indexer, feature_indexer, feature_weights):
         self.tag_indexer = tag_indexer
@@ -177,8 +180,27 @@ class CrfNerModel(object):
     # Takes a LabeledSentence object and returns a new copy of that sentence with a set of chunks predicted by
     # the CRF model. See BadNerModel for an example implementation
     def decode(self, sentence):
-        raise Exception("IMPLEMENT ME")
+        scr = FeatureBasedSequenceScorer(self.tag_indexer, self.word_indexer, self.feature_cache, self.feature_weights)
+        n_tags = len(self.tag_indexer)
+        n_words = len(sentence.tokens)
+        pred_tags = []
+        feature_indexer = Indexer()
+        # 4-d list indexed by sentence index, word index, tag index, feature index
+        feature_cache = [[[] for k in xrange(0, len(tag_indexer))] for j in xrange(0, len(sentences[i]))] 
+                                                                    
+        for word_idx in xrange(0, n_words):
+            for tag_idx in xrange(0, n_tags):
+                feature_cache[word_idx][tag_idx] = extract_emission_features_test(sentence, word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)        
 
+        
+        frw, bkw = forward_backward(sentence, tag_indexer, feature_cache,\
+                                                            feature_weights)
+        frw_bkw = (frw + bkw)
+        normalization = np.sum(frw_bkw[:,1])
+        frw_bkw -= normalization 
+        pred_seq = np.argmax(frw_bks,1) # check if it should be zero or 1
+
+        return LabeledSentence(sentence.tokens, chunks_from_bio_tag_seq(pred_tags))
 
 # Trains a CrfNerModel on the given corpus of sentences.
 def train_crf_model(sentences):
@@ -197,54 +219,109 @@ def train_crf_model(sentences):
             print "Ex " + repr(sentence_idx) + "/" + repr(len(sentences))
         for word_idx in xrange(0, len(sentences[sentence_idx])):
             for tag_idx in xrange(0, len(tag_indexer)):
-                feature_cache[sentence_idx][word_idx][tag_idx] = extract_emission_features(sentences[sentence_idx], word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)
+                feature_cache[sentence_idx][word_idx][tag_idx] = extract_emission_features(sentences[sentence_idx], \
+                                  word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)
     
- 
-    # compute probability equivalents in terms of feature function
+    
+   
+    # SGD
     epochs = 1
-    for epoch in range(epochs)
+    # feature_weights = np.random.rand(len(feature_indexer))
+    feature_weights = np.zeros(len(feature_indexer))
+    n_tags = len(tag_indexer)
+    derivative_counter = Counter()
+    alpha = 0.1
+    for epoch in range(epochs):
         for iter_n in range(n_s):
-            rand_example = random.randrange(0, n_s)
-            forw_backw = forward_backward
+            
+            rand_example = np.random.random_integers(0, n_s-1)
+            sentence = sentences[rand_example]
+            tags_s = sentence.get_bio_tags()
+            frw, bkw = forward_backward(sentence, tag_indexer, feature_cache[rand_example],\
+                                                                feature_weights)
+            
+            frw_bkw = frw + bkw
+            pdb.set_trace()
+            normalization = np.sum(frw_bkw[:,1])
+            frw_bkw -= normalization 
+            frw_bkw = np.exp(frw_bkw)
+            n_words = len(sentence)
+
+
+
+
+            for in_w in range(n_words):
+                derivative_counter.increment_all(feature_cache[rand_example][in_w][tag_indexer.get_index(tags_s[in_w])],1)
+            for in_w in range(n_words):
+                for in_tag in range (n_tags):
+                    derivative_counter.increment_all(feature_cache[rand_example][in_w][in_tag], - frw_bkw[in_tag, in_w])
+        
+        for key, value in derivative_counter.iteritems():
+            feature_weights[key] -= alpha * value
     
     
-    forward_backward()
+
+    
+    return CrfNerModel(tag_indexer, feature_indexer, feature_weights)
 
 
-    # calculate SGD
-
-    bad_model =  CrfNerModel(tag_indexer,feature_indexer,np.ones(len(feature_indexer))*0.1)
-
-
-def forward_backward(sentence, sentence_id, feature_cache, feature_weights):
+def forward_backward(sentence, tag_indexer, feature_cache_s, feature_weights):
     n_words = len(sentence.tokens)
-    n_tags = len(sentence.get_bio_tags)
+    n_tags = len(tag_indexer)
     forward = np.zeros((n_tags, n_words))
     backward = np.zeros((n_tags, n_words))
-    f_e = prob_substitute(sentence, sentence_id, feature_weights)
 
-    # calculate the forward step
-    forward[:,0] = feature_cache[sentence_id][0][:]  # initialization step\
+    f_e = prob_substitute_tr(sentence, tag_indexer, feature_weights, feature_cache_s)
+                                                              
 
-    #recursion step
+    # Forward step
+    forward[:,0] = f_e[:,0]  # initialization step\
+
+    # recursion step
     for in_w in range(1,n_words):
         for in_tag in range(n_tags):
-            forward[in_tag, in_w] = logaddexp( forward[:,in_w-1] , f_e[:,in_w] )
+            forward[in_tag, in_w] = misc.logsumexp(forward[:,in_w-1] + f_e[:,in_w])
 
 
+    # Backward step
+    backward[:,n_words-1] = 0  # initialization step\
+
+    # recursion step
+    for in_w in reversed(range(0,n_words-1)):
+        for in_tag in range(n_tags):
+            backward[in_tag, in_w] = misc.logsumexp(forward[:,in_w+1] + f_e[:,in_w+1])
+    return forward, backward
 
 
-def prob_substitute(sentence, sentence_id, feature_weights):
+def prob_substitute_tr(sentence, tag_indexer, feature_weights, feature_cache_s):
     n_words = len(sentence.tokens)
-    n_tags = len(sentence.get_bio_tags)
+    n_tags = len(tag_indexer)
+    prob_sub = np.zeros((n_tags, n_words))
     for in_w in range(n_words):
         for in_tag in range(n_tags):
-            prob_sub[in_tag, in_w] = score_indexed_features(feature_cache(sentence_id, in_w,in_tag),\
+            prob_sub[in_tag, in_w] = score_indexed_features(feature_cache_s[in_w][in_tag],\
                                                                           feature_weights)
     return prob_sub
 
 
+class FeatureBasedSequenceScorer(object):
+    def __init__(self, tag_indexer, word_indexer, feature_cache, feature_weights):
+        self.tag_indexer = tag_indexer
+        self.word_indexer = word_indexer
+        self.emission_log_probs = emission_log_probs
+        self.feature_cache = feature_cache
 
+    def score_emission(self, sentence, sentence_id, tag_idx, word_posn):
+        word = sentence.tokens[word_posn].word
+        word_idx = self.word_indexer.index_of(word) if self.word_indexer.contains(word) else self.word_indexer.get_index("UNK")
+        activated_features = feature_cache[sentence_id][word_posn][tag_idx]
+
+        #####
+        # consider using score_indexed_features(feats, weights) instead of the line below
+        #####
+        prob_sub = np.sum(feature_weights[activated_features]) 
+
+        return prob_sub
 
 
 
@@ -254,6 +331,53 @@ def prob_substitute(sentence, sentence_id, feature_weights):
 # this should be True at train time (since we want to learn weights for all features) and False at
 # test time (to avoid creating any features we don't have weights for).
 def extract_emission_features(sentence, word_index, tag, feature_indexer, add_to_indexer):
+    feats = []
+    curr_word = sentence.tokens[word_index].word
+    # Lexical and POS features on this word, the previous, and the next (Word-1, Word0, Word1)
+    for idx_offset in xrange(-1, 2):
+        if word_index + idx_offset < 0:
+            active_word = "<s>"
+        elif word_index + idx_offset >= len(sentence):
+            active_word = "</s>"
+        else:
+            active_word = sentence.tokens[word_index + idx_offset].word
+        if word_index + idx_offset < 0:
+            active_pos = "<S>"
+        elif word_index + idx_offset >= len(sentence):
+            active_pos = "</S>"
+        else:
+            active_pos = sentence.tokens[word_index + idx_offset].pos
+        maybe_add_feature(feats, feature_indexer, add_to_indexer, tag + ":Word" + repr(idx_offset) + "=" + active_word)
+        maybe_add_feature(feats, feature_indexer, add_to_indexer, tag + ":Pos" + repr(idx_offset) + "=" + active_pos)
+    # Character n-grams of the current word
+    max_ngram_size = 3
+    for ngram_size in xrange(1, max_ngram_size+1):
+        start_ngram = curr_word[0:min(ngram_size, len(curr_word))]
+        maybe_add_feature(feats, feature_indexer, add_to_indexer, tag + ":StartNgram=" + start_ngram)
+        end_ngram = curr_word[max(0, len(curr_word) - ngram_size):]
+        maybe_add_feature(feats, feature_indexer, add_to_indexer, tag + ":EndNgram=" + end_ngram)
+    # Look at a few word shape features
+    maybe_add_feature(feats, feature_indexer, add_to_indexer, tag + ":IsCap=" + repr(curr_word[0].isupper()))
+    # Compute word shape
+    new_word = []
+    for i in xrange(0, len(curr_word)):
+        if curr_word[i].isupper():
+            new_word += "X"
+        elif curr_word[i].islower():
+            new_word += "x"
+        elif curr_word[i].isdigit():
+            new_word += "0"
+        else:
+            new_word += "?"
+    maybe_add_feature(feats, feature_indexer, add_to_indexer, tag + ":WordShape=" + repr(new_word))
+    return np.asarray(feats, dtype=int)
+
+
+# Extracts emission features for tagging the word at word_index with tag.
+# add_to_indexer is a boolean variable indicating whether we should be expanding the indexer or not:
+# this should be True at train time (since we want to learn weights for all features) and False at
+# test time (to avoid creating any features we don't have weights for).
+def extract_emission_features_test(sentence, word_index, tag, feature_indexer, add_to_indexer):
     feats = []
     curr_word = sentence.tokens[word_index].word
     # Lexical and POS features on this word, the previous, and the next (Word-1, Word0, Word1)
