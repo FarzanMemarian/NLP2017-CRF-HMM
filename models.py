@@ -173,34 +173,38 @@ def get_word_index(word_indexer, word_counter, word):
 
 class CrfNerModel(object):
     def __init__(self, tag_indexer, feature_indexer, feature_weights):
-        self.tag_indexer = tag_indexer
+        self.tag_indexer     = tag_indexer
         self.feature_indexer = feature_indexer
         self.feature_weights = feature_weights
 
     # Takes a LabeledSentence object and returns a new copy of that sentence with a set of chunks predicted by
     # the CRF model. See BadNerModel for an example implementation
     def decode(self, sentence):
-        scr = FeatureBasedSequenceScorer(self.tag_indexer, self.word_indexer, self.feature_cache, self.feature_weights)
+        # scr = FeatureBasedSequenceScorer(self.tag_indexer, self.word_indexer, self.feature_cache, self.feature_weights)
         n_tags = len(self.tag_indexer)
         n_words = len(sentence.tokens)
         pred_tags = []
         feature_indexer = Indexer()
         # 4-d list indexed by sentence index, word index, tag index, feature index
-        feature_cache = [[[] for k in xrange(0, len(tag_indexer))] for j in xrange(0, len(sentences[i]))] 
-                                                                    
+        feature_cache = [[[] for k in xrange(0, len(self.tag_indexer))] for j in xrange(0, len(sentence))]                                                        
         for word_idx in xrange(0, n_words):
             for tag_idx in xrange(0, n_tags):
-                feature_cache[word_idx][tag_idx] = extract_emission_features_test(sentence, word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)        
-
-        
-        frw, bkw = forward_backward(sentence, tag_indexer, feature_cache,\
-                                                            feature_weights)
-        frw_bkw = (frw + bkw)
-        normalization = np.sum(frw_bkw[:,1])
-        frw_bkw -= normalization 
-        pred_seq = np.argmax(frw_bks,1) # check if it should be zero or 1
-
+                feature_cache[word_idx][tag_idx] = extract_emission_features_test(sentence, \
+                    word_idx, self.tag_indexer.get_object(tag_idx), self.feature_indexer, add_to_indexer=False)        
+        frw, bkw = forward_backward(sentence, self.tag_indexer, feature_cache,\
+                                                            self.feature_weights)
+        frw_bkw = frw + bkw
+        normalization = misc.logsumexp(frw_bkw[:,0])
+        frw_bkw -= normalization
+        marginal_prob = np.exp(frw_bkw)
+        pred_seq = np.argmax(marginal_prob,0) # check if it should be zero or 1
+        pred_tags = []
+        for tag_idx in pred_seq:
+            pred_tags.append(self.tag_indexer.get_object(tag_idx))
+        # pdb.set_trace()      
         return LabeledSentence(sentence.tokens, chunks_from_bio_tag_seq(pred_tags))
+
+
 
 # Trains a CrfNerModel on the given corpus of sentences.
 def train_crf_model(sentences):
@@ -222,48 +226,46 @@ def train_crf_model(sentences):
                 feature_cache[sentence_idx][word_idx][tag_idx] = extract_emission_features(sentences[sentence_idx], \
                                   word_idx, tag_indexer.get_object(tag_idx), feature_indexer, add_to_indexer=True)
     
-    
-   
+
     # SGD
-    epochs = 1
+    epochs = 20
     # feature_weights = np.random.rand(len(feature_indexer))
     feature_weights = np.zeros(len(feature_indexer))
-    n_tags = len(tag_indexer)
-    derivative_counter = Counter()
     alpha = 0.1
+    loss = 0.0
     for epoch in range(epochs):
         for iter_n in range(n_s):
-            
-            rand_example = np.random.random_integers(0, n_s-1)
+            rand_example = iter_n # np.random.random_integers(0, n_s-1)
             sentence = sentences[rand_example]
-            tags_s = sentence.get_bio_tags()
             frw, bkw = forward_backward(sentence, tag_indexer, feature_cache[rand_example],\
                                                                 feature_weights)
-            
-            frw_bkw = frw + bkw
-            pdb.set_trace()
-            normalization = np.sum(frw_bkw[:,1])
-            frw_bkw -= normalization 
-            frw_bkw = np.exp(frw_bkw)
-            n_words = len(sentence)
-
-
-
-
-            for in_w in range(n_words):
-                derivative_counter.increment_all(feature_cache[rand_example][in_w][tag_indexer.get_index(tags_s[in_w])],1)
-            for in_w in range(n_words):
-                for in_tag in range (n_tags):
-                    derivative_counter.increment_all(feature_cache[rand_example][in_w][in_tag], - frw_bkw[in_tag, in_w])
-        
-        for key, value in derivative_counter.iteritems():
-            feature_weights[key] -= alpha * value
-    
-    
+            derivative = loss_derivative(sentence, feature_cache[rand_example], tag_indexer, frw, bkw)
+            for key in derivative.keys():
+                # pdb.set_trace()
+                feature_weights[key] += alpha * derivative.get_count(key)
+                loss += derivative.get_count(key)
+    np.savetxt('feature_weights', feature_weights)
 
     
     return CrfNerModel(tag_indexer, feature_indexer, feature_weights)
 
+
+def loss_derivative(sentence, feature_cache_s, tag_indexer, frw, bkw):
+    derivative_counter = Counter()
+    n_words = len(sentence.tokens)
+    n_tags = len(tag_indexer)
+    tags_s = sentence.get_bio_tags() # gold tags for this sentence
+    frw_bkw = frw + bkw
+    normalization = misc.logsumexp(frw_bkw[:,0])
+    frw_bkw -= normalization 
+    cond_prob = np.exp(frw_bkw) # now this is the conditional probability
+    n_words = len(sentence)
+    for in_w in range(n_words):
+        derivative_counter.increment_all(feature_cache_s[in_w][tag_indexer.get_index(tags_s[in_w])],1)
+    for in_w in range(n_words):
+        for in_tag in range (n_tags):
+            derivative_counter.increment_all(feature_cache_s[in_w][in_tag], -cond_prob[in_tag, in_w])
+    return derivative_counter
 
 def forward_backward(sentence, tag_indexer, feature_cache_s, feature_weights):
     n_words = len(sentence.tokens)
@@ -271,36 +273,43 @@ def forward_backward(sentence, tag_indexer, feature_cache_s, feature_weights):
     forward = np.zeros((n_tags, n_words))
     backward = np.zeros((n_tags, n_words))
 
-    f_e = prob_substitute_tr(sentence, tag_indexer, feature_weights, feature_cache_s)
-                                                              
+    # change this to score_indexed_features
+    # f_e = prob_substitute_tr(sentence, tag_indexer,  feature_cache_s, feature_weights)   
 
+    init = np.ones(n_tags)*np.log(1.0/9)
     # Forward step
-    forward[:,0] = f_e[:,0]  # initialization step\
-
+    for in_tag in range(n_tags):
+        forward[in_tag,0] = misc.logsumexp(init,0) + score_indexed_features(feature_cache_s[0][in_tag],feature_weights)  # initialization step
     # recursion step
     for in_w in range(1,n_words):
         for in_tag in range(n_tags):
-            forward[in_tag, in_w] = misc.logsumexp(forward[:,in_w-1] + f_e[:,in_w])
+            forward[in_tag, in_w] = misc.logsumexp(forward[:,in_w-1],0) + score_indexed_features(feature_cache_s[in_w][in_tag],feature_weights) #check the change
 
 
     # Backward step
-    backward[:,n_words-1] = 0  # initialization step\
-
+    last = misc.logsumexp(np.zeros(n_tags))
+    backward[:,-1] = last  # initialization step
     # recursion step
-    for in_w in reversed(range(0,n_words-1)):
+    for in_w in reversed(range(n_words-1)):
         for in_tag in range(n_tags):
-            backward[in_tag, in_w] = misc.logsumexp(forward[:,in_w+1] + f_e[:,in_w+1])
+            next_prob = backward[0, in_w+1] + score_indexed_features(feature_cache_s[in_w+1][0],feature_weights)
+            for in_tag2 in range(1,n_tags):
+                next_prob = np.logaddexp(next_prob, (backward[in_tag2, in_w+1] + \
+                           score_indexed_features(feature_cache_s[in_w+1][in_tag2], feature_weights)))
+            backward[in_tag, in_w] = next_prob
+    
     return forward, backward
 
 
-def prob_substitute_tr(sentence, tag_indexer, feature_weights, feature_cache_s):
+def prob_substitute_tr(sentence, tag_indexer, feature_cache_s, feature_weights):
     n_words = len(sentence.tokens)
     n_tags = len(tag_indexer)
     prob_sub = np.zeros((n_tags, n_words))
+
     for in_w in range(n_words):
         for in_tag in range(n_tags):
-            prob_sub[in_tag, in_w] = score_indexed_features(feature_cache_s[in_w][in_tag],\
-                                                                          feature_weights)
+            
+            prob_sub[in_tag, in_w] = score_indexed_features(feature_cache_s[in_w][in_tag],feature_weights)
     return prob_sub
 
 
