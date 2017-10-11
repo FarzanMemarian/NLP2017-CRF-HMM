@@ -228,7 +228,7 @@ def train_crf_model(sentences):
     
 
     # SGD
-    epochs = 20
+    epochs = 30
     # feature_weights = np.random.rand(len(feature_indexer))
     feature_weights = np.zeros(len(feature_indexer))
     alpha = 0.1
